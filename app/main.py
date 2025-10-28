@@ -124,13 +124,19 @@ logger.info("InstaBrief API setup complete!")
 
 
 @app.get("/health")
-async def health_check():
-    return {"status": "ok", "message": "InstaBrief API is running", "timestamp": "2025-10-28"}
+def health_check():
+    """Synchronous health check for faster response"""
+    return {"status": "ok"}
 
-@app.get("/simple")
-async def simple_check():
-    """Ultra-simple endpoint for debugging"""
+@app.get("/simple") 
+def simple_check():
+    """Ultra-simple synchronous endpoint"""
     return {"alive": True}
+
+@app.get("/ping")
+def ping():
+    """Minimal ping endpoint"""
+    return "pong"
 
 
 @app.get("/")

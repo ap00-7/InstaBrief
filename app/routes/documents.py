@@ -25,10 +25,35 @@ try:
 except ImportError:
     Presentation = None
 import io
-from app.services.storage import StorageService
-from app.services.summarizer import SummarizerService
-from app.services.tts import MultilingualTTSService
-from app.utils.security import get_current_user
+
+# Import services with error handling to prevent startup blocking
+try:
+    from app.services.storage import StorageService
+    print("✓ StorageService imported successfully")
+except Exception as e:
+    print(f"⚠ StorageService import failed: {e}")
+    StorageService = None
+
+try:
+    from app.services.summarizer import SummarizerService  
+    print("✓ SummarizerService imported successfully")
+except Exception as e:
+    print(f"⚠ SummarizerService import failed: {e}")
+    SummarizerService = None
+
+try:
+    from app.services.tts import MultilingualTTSService
+    print("✓ MultilingualTTSService imported successfully") 
+except Exception as e:
+    print(f"⚠ MultilingualTTSService import failed: {e}")
+    MultilingualTTSService = None
+
+try:
+    from app.utils.security import get_current_user
+    print("✓ Security utils imported successfully")
+except Exception as e:
+    print(f"⚠ Security utils import failed: {e}")
+    get_current_user = None
 
 router = APIRouter()
 
@@ -39,20 +64,32 @@ _tts_service = None
 
 def get_storage():
     global _storage
-    if _storage is None:
-        _storage = StorageService()
+    if _storage is None and StorageService is not None:
+        try:
+            _storage = StorageService()
+        except Exception as e:
+            print(f"Failed to initialize StorageService: {e}")
+            return None
     return _storage
 
 def get_summarizer_service():
     global _summarizer_service
-    if _summarizer_service is None:
-        _summarizer_service = SummarizerService()
+    if _summarizer_service is None and SummarizerService is not None:
+        try:
+            _summarizer_service = SummarizerService()
+        except Exception as e:
+            print(f"Failed to initialize SummarizerService: {e}")
+            return None
     return _summarizer_service
 
 def get_tts_service():
     global _tts_service
-    if _tts_service is None:
-        _tts_service = MultilingualTTSService()
+    if _tts_service is None and MultilingualTTSService is not None:
+        try:
+            _tts_service = MultilingualTTSService()
+        except Exception as e:
+            print(f"Failed to initialize MultilingualTTSService: {e}")
+            return None
     return _tts_service
 
 @router.get("/health")
