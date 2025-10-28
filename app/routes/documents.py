@@ -31,9 +31,29 @@ from app.services.tts import MultilingualTTSService
 from app.utils.security import get_current_user
 
 router = APIRouter()
-storage = StorageService()
-summarizer_service = SummarizerService()
-tts_service = MultilingualTTSService()
+
+# Lazy-loaded services to speed up startup
+_storage = None
+_summarizer_service = None
+_tts_service = None
+
+def get_storage():
+    global _storage
+    if _storage is None:
+        _storage = StorageService()
+    return _storage
+
+def get_summarizer_service():
+    global _summarizer_service
+    if _summarizer_service is None:
+        _summarizer_service = SummarizerService()
+    return _summarizer_service
+
+def get_tts_service():
+    global _tts_service
+    if _tts_service is None:
+        _tts_service = MultilingualTTSService()
+    return _tts_service
 
 @router.get("/health")
 async def documents_health():
@@ -264,7 +284,7 @@ async def translate_text(request: TranslationRequest):
 async def get_supported_languages():
     """Get list of all supported languages for multilingual summarization"""
     try:
-        languages_info = summarizer_service.get_supported_languages()
+        languages_info = get_summarizer_service().get_supported_languages()
         return {
             "status": "success",
             "data": languages_info
@@ -317,7 +337,7 @@ async def detect_text_language(request: LanguageDetectionRequest):
                 }
             }
         
-        detection_result = summarizer_service.detect_language(request.text)
+        detection_result = get_summarizer_service().detect_language(request.text)
         return {
             "status": "success",
             "data": detection_result
@@ -346,7 +366,7 @@ async def create_multilingual_summary(request: MultilingualSummaryRequest):
             }
         
         # Generate multilingual summary
-        summary_result = summarizer_service.generate_multilingual_summary(
+        summary_result = get_summarizer_service().generate_multilingual_summary(
             text=request.text,
             target_language=request.target_language,
             max_length=request.max_length,
@@ -564,7 +584,7 @@ Please refer to the original PowerPoint file for complete and accurate content i
         
         # Save to MongoDB
         print(f"Saving document to MongoDB: {document_data['title']}")
-        saved_id = await storage.save_document(document_data)
+        saved_id = await get_storage().save_document(document_data)
         print(f"Document saved with ID: {saved_id}")
         
         # Return response
@@ -592,7 +612,7 @@ Please refer to the original PowerPoint file for complete and accurate content i
 @router.get("/{document_id}", response_model=DocumentResponse)
 async def get_document(document_id: str):
     """Get document by ID"""
-    document = await storage.get_document_by_id(document_id)
+    document = await get_storage().get_document_by_id(document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     
@@ -603,7 +623,7 @@ async def download_document(document_id: str):
     """Download original document"""
     print(f"Download request for document ID: {document_id}")
     
-    document = await storage.get_document_by_id(document_id)
+    document = await get_storage().get_document_by_id(document_id)
     if not document:
         print(f"Document not found: {document_id}")
         raise HTTPException(status_code=404, detail="Document not found")
@@ -626,7 +646,7 @@ async def download_document(document_id: str):
 @router.get("/{document_id}/audio")
 async def get_document_audio(document_id: str, language: str = "en"):
     """Generate and return audio for document summary"""
-    document = await storage.get_document_by_id(document_id)
+    document = await get_storage().get_document_by_id(document_id)
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     
