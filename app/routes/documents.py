@@ -421,122 +421,94 @@ async def upload_document(
         
         # Extract text based on file type
         if file_ext == '.pdf':
-            if PyPDF2 is None:
-                # Fallback: create sample content for PDF
+            try:
+                print(f"Attempting to extract text from PDF: {file.filename}")
+                text_content = extract_pdf_text(file_content)
+                print(f"PDF extraction successful! Extracted {len(text_content)} characters")
+                
+                # Validate that we got actual content, not just whitespace
+                if not text_content.strip() or len(text_content.strip()) < 50:
+                    raise Exception("Extracted text is too short or empty")
+                    
+            except Exception as e:
+                print(f"PDF extraction failed: {str(e)}")
+                # Only use fallback if extraction completely fails
                 text_content = f"""
-This is a PDF document titled "{file.filename}". 
+PDF Extraction Error for "{file.filename}":
 
-The document contains comprehensive information about various topics including strategic planning, operational frameworks, and performance analysis. It discusses key concepts related to business development, organizational structure, and implementation methodologies.
+The PDF file could not be processed automatically. This could be due to:
+- Password protection
+- Scanned images without OCR text
+- Corrupted file format
+- Complex formatting
 
-The content covers multiple sections including introduction, methodology, analysis, findings, and conclusions. Each section provides detailed insights into the subject matter with supporting evidence and examples.
+Please try:
+1. Converting to a text-based PDF
+2. Using a different file format (DOCX, TXT)
+3. Ensuring the file is not password protected
 
-Key topics addressed include:
-- Strategic planning and implementation
-- Operational excellence and efficiency
-- Performance measurement and analysis
-- Risk management and mitigation
-- Stakeholder engagement and communication
-- Change management and organizational development
-
-The document presents a thorough examination of best practices and provides recommendations for future improvements and development initiatives.
-"""
-            else:
-                try:
-                    text_content = extract_pdf_text(file_content)
-                except Exception as e:
-                    print(f"PDF extraction failed: {str(e)}")
-                    # Fallback content
-                    text_content = f"""
-This PDF document "{file.filename}" contains important information that could not be automatically extracted due to technical limitations.
-
-The document likely contains structured content including headings, paragraphs, tables, and possibly images or charts. Based on the filename, this appears to be an educational or professional document containing notes, analysis, or reference material.
-
-Common content in such documents typically includes:
-- Introduction and overview sections
-- Detailed explanations of key concepts
-- Examples and case studies
-- Analysis and findings
-- Conclusions and recommendations
-- References and additional resources
-
-For the most accurate content, please refer to the original document file.
+Filename: {file.filename}
+File size: {len(file_content)} bytes
 """
         elif file_ext == '.docx':
-            if docx is None:
-                # Fallback: create sample content for DOCX
+            try:
+                print(f"Attempting to extract text from DOCX: {file.filename}")
+                text_content = extract_docx_text(file_content)
+                print(f"DOCX extraction successful! Extracted {len(text_content)} characters")
+                
+                # Validate that we got actual content
+                if not text_content.strip() or len(text_content.strip()) < 50:
+                    raise Exception("Extracted text is too short or empty")
+                    
+            except Exception as e:
+                print(f"DOCX extraction failed: {str(e)}")
+                # Only use fallback if extraction completely fails
                 text_content = f"""
-This is a Microsoft Word document titled "{file.filename}".
+DOCX Extraction Error for "{file.filename}":
 
-The document contains structured content with multiple sections covering various aspects of the subject matter. It includes detailed analysis, explanations, and supporting information organized in a professional format.
+The Word document could not be processed automatically. This could be due to:
+- Corrupted file format
+- Complex formatting or embedded objects
+- Password protection
+- Unsupported DOCX version
 
-The content typically includes:
-- Executive summary or introduction
-- Main body with detailed sections
-- Analysis and discussion points
-- Conclusions and recommendations
-- Supporting data and references
+Please try:
+1. Saving as a simpler DOCX format
+2. Converting to TXT format
+3. Ensuring the file is not password protected
 
-This document appears to be a comprehensive resource containing valuable information relevant to the topic indicated by the filename.
-"""
-            else:
-                try:
-                    text_content = extract_docx_text(file_content)
-                except Exception as e:
-                    print(f"DOCX extraction failed: {str(e)}")
-                    # Fallback content
-                    text_content = f"""
-This Microsoft Word document "{file.filename}" contains structured content that could not be automatically processed.
-
-The document likely includes formatted text with headings, paragraphs, lists, and possibly tables or images. Based on the filename, this appears to be a professional or academic document.
-
-Typical content structure includes:
-- Title and introduction
-- Multiple content sections
-- Detailed explanations and analysis
-- Supporting examples or data
-- Summary and conclusions
-
-Please refer to the original document for complete and accurate content.
+Filename: {file.filename}
+File size: {len(file_content)} bytes
 """
         elif file_ext == '.pptx':
-            if Presentation is None:
-                # Fallback: create sample content for PPTX
+            try:
+                print(f"Attempting to extract text from PPTX: {file.filename}")
+                text_content = extract_pptx_text(file_content)
+                print(f"PPTX extraction successful! Extracted {len(text_content)} characters")
+                
+                # Validate that we got actual content
+                if not text_content.strip() or len(text_content.strip()) < 50:
+                    raise Exception("Extracted text is too short or empty")
+                    
+            except Exception as e:
+                print(f"PPTX extraction failed: {str(e)}")
+                # Only use fallback if extraction completely fails
                 text_content = f"""
-This is a PowerPoint presentation titled "{file.filename}".
+PPTX Extraction Error for "{file.filename}":
 
-The presentation contains multiple slides with visual content, text, and possibly charts or diagrams. Based on the filename, this appears to be a professional or academic presentation.
+The PowerPoint presentation could not be processed automatically. This could be due to:
+- Complex slide layouts with embedded objects
+- Password protection
+- Corrupted file format
+- Slides containing mostly images/graphics
 
-Typical presentation structure includes:
-- Title slide with presentation name
-- Introduction and overview slides
-- Main content slides with key points
-- Supporting data and visualizations
-- Conclusion and summary slides
-- References or contact information
+Please try:
+1. Saving as a simpler PPTX format
+2. Converting slide content to DOCX or TXT
+3. Ensuring the file is not password protected
 
-Each slide likely contains bullet points, headings, and supporting graphics to convey information effectively.
-
-For the complete presentation with all visual elements, please refer to the original PowerPoint file.
-"""
-            else:
-                try:
-                    text_content = extract_pptx_text(file_content)
-                except Exception as e:
-                    print(f"PPTX extraction failed: {str(e)}")
-                    # Fallback content
-                    text_content = f"""
-This PowerPoint presentation "{file.filename}" contains slide-based content that could not be automatically processed.
-
-The presentation likely includes:
-- Multiple slides with structured content
-- Title and body text on each slide
-- Bullet points and lists
-- Possibly tables, charts, or images
-- Speaker notes or additional information
-
-Based on the filename, this appears to be a professional presentation with key information organized across multiple slides.
-
-Please refer to the original PowerPoint file for complete and accurate content including all visual elements.
+Filename: {file.filename}
+File size: {len(file_content)} bytes
 """
         elif file_ext == '.txt':
             text_content = file_content.decode('utf-8')
