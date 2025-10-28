@@ -1,0 +1,88 @@
+services:
+  # Backend API Service
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: instabrief-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/instabrief
+      - CORS_ORIGINS=["http://localhost:5173", "http://frontend:5173"]
+    depends_on:
+      mongo:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    networks:
+      - instabrief-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Frontend Service
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: instabrief-frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: sh -c "npm install && node node_modules/vite/bin/vite.js --host 0.0.0.0 --port 5173"
+    networks:
+      - instabrief-network
+    depends_on:
+      - api
+      
+  # MongoDB Service
+  mongo:
+    image: mongo:latest
+    container_name: instabrief-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=instabrief
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - instabrief-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  libretranslate:
+    image: libretranslate/libretranslate:latest
+    container_name: instabrief-translate
+    ports:
+      - "5001:5000"
+    environment:
+      - LT_HOST=0.0.0.0
+      - LT_CORS_ENABLED=true
+      - LT_DISABLE_WEB_UI=false
+      - LT_API_KEYS=false
+    volumes:
+      - libretranslate_models:/app/db
+    networks:
+      - instabrief-network
+    restart: unless-stopped
+
+volumes:
+  mongo_data:
+  libretranslate_models:
+
+networks:
+  instabrief-network:
+    driver: bridge

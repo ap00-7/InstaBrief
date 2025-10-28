@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root { height: 100%; }
+
+/* Custom styles for responsive sidebar */
+@media (max-width: 767px) {
+  .sidebar-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 30;
+  }
+}
+
+/* Ensure smooth transitions */
+.sidebar-transition {
+  transition: transform 0.3s ease-in-out;
+}
+
+.main-content-transition {
+  transition: margin-left 0.3s ease-in-out;
+}
+
+/* Fix sidebar positioning */
+@media (min-width: 768px) {
+  .sidebar-desktop {
+    position: relative !important;
+    transform: none !important;
+  }
+}
+
+/* Ensure main content doesn't get covered */
+.main-content {
+  min-height: 100vh;
+  width: 100%;
+}
+
+@media (min-width: 768px) {
+  .main-content {
+    margin-left: 0;
+    transition: margin-left 0.3s ease-in-out;
+  }
+  
+  .main-content.sidebar-open {
+    margin-left: 16rem; /* 256px = w-64 */
+  }
+}
+
+

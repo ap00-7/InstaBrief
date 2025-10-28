@@ -1,0 +1,109 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: instabrief-api-prod
+    restart: always
+    environment:
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/instabrief}
+      - SECRET_KEY=${SECRET_KEY:-change-this-in-production}
+      - ENVIRONMENT=production
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+    ports:
+      - "8000:8000"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - instabrief-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+    container_name: instabrief-frontend-prod
+    restart: always
+    ports:
+      - "5173:5173"
+    networks:
+      - instabrief-network
+    depends_on:
+      - api
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+
+  mongo:
+    image: mongo:latest
+    container_name: instabrief-mongo-prod
+    restart: always
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_USERNAME:-admin}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD:-changeme}
+      - MONGO_INITDB_DATABASE=instabrief
+    volumes:
+      - mongo-data-prod:/data/db
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    networks:
+      - instabrief-network
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/instabrief --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+
+  # Optional: Nginx reverse proxy (recommended for production)
+  nginx:
+    image: nginx:alpine
+    container_name: instabrief-nginx-prod
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - api
+      - frontend
+    networks:
+      - instabrief-network
+    profiles:
+      - with-nginx
+
+networks:
+  instabrief-network:
+    driver: bridge
+
+volumes:
+  mongo-data-prod:
+    driver: local

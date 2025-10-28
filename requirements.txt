@@ -1,0 +1,48 @@
+# Core Backend - Minimal
+fastapi
+uvicorn
+pydantic
+pydantic[email]
+pydantic-settings
+python-multipart
+passlib[bcrypt]
+bcrypt<4.0.0
+python-jose
+httpx
+requests
+
+# OAuth
+authlib
+itsdangerous
+
+# Databases
+motor
+pymongo
+
+# Basic NLP
+nltk
+sumy
+numpy
+wordninja
+spacy
+
+# Multilingual AI Models
+transformers>=4.21.0
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.2.2+cpu
+sentencepiece>=0.1.97
+sacremoses>=0.0.53
+langdetect>=1.0.9
+accelerate>=0.20.0
+
+# Document Processing
+PyPDF2==3.0.1
+PyMuPDF==1.23.8
+python-docx==0.8.11
+python-pptx==0.6.21
+
+# TTS
+gTTS
+
+# Dev
+pytest
