@@ -40,7 +40,12 @@ app.include_router(support_router, prefix="/api/support", tags=["support"])
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok"}
+    return {"status": "ok", "message": "InstaBrief API is running", "timestamp": "2025-10-28"}
+
+@app.get("/simple")
+async def simple_check():
+    """Ultra-simple endpoint for debugging"""
+    return {"alive": True}
 
 
 @app.get("/")
