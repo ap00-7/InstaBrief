@@ -24,8 +24,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve static files from frontend directory
-app.mount("/static", StaticFiles(directory="frontend"), name="static")
+# Serve static files from frontend directory (only in development)
+if settings.environment == "development" and os.path.exists("frontend"):
+    app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(articles_router, prefix="/api/articles", tags=["articles"])
@@ -43,8 +44,13 @@ async def health_check():
 
 
 @app.get("/")
-async def serve_frontend():
-    """Serve the frontend application"""
-    return FileResponse("frontend/index.html")
+async def root():
+    """API root endpoint"""
+    return {
+        "message": "InstaBrief API",
+        "version": "0.1.0",
+        "docs": "/docs",
+        "health": "/health"
+    }
 
 
