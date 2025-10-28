@@ -5,8 +5,17 @@ Automatically detects the language of input text using multiple methods
 
 import logging
 from typing import Dict, List, Tuple, Optional
-from langdetect import detect, detect_langs, LangDetectException
 import re
+
+# Import langdetect with fallback
+try:
+    from langdetect import detect, detect_langs, LangDetectException
+    LANGDETECT_AVAILABLE = True
+except ImportError:
+    detect = None
+    detect_langs = None
+    LangDetectException = Exception
+    LANGDETECT_AVAILABLE = False
 
 class LanguageDetector:
     """
@@ -44,30 +53,31 @@ class LanguageDetector:
         # Clean text for better detection
         cleaned_text = self._clean_text(text)
         
-        # Primary detection using langdetect
-        try:
-            detected_langs = detect_langs(cleaned_text)
-            if detected_langs:
-                primary_lang = detected_langs[0]
-                
-                # If confidence is high enough, return result
-                if primary_lang.prob >= self.confidence_threshold:
-                    return primary_lang.lang, primary_lang.prob
-                
-                # For lower confidence, try pattern matching as verification
-                pattern_lang = self._detect_by_patterns(cleaned_text)
-                if pattern_lang and pattern_lang == primary_lang.lang:
-                    # Pattern confirms langdetect result
-                    return primary_lang.lang, min(primary_lang.prob + 0.1, 1.0)
-                elif pattern_lang:
-                    # Pattern suggests different language
-                    return pattern_lang, 0.8
-                else:
-                    # Use langdetect result even with lower confidence
-                    return primary_lang.lang, primary_lang.prob
+        # Primary detection using langdetect (if available)
+        if LANGDETECT_AVAILABLE:
+            try:
+                detected_langs = detect_langs(cleaned_text)
+                if detected_langs:
+                    primary_lang = detected_langs[0]
                     
-        except LangDetectException as e:
-            logging.warning(f"Language detection failed: {e}")
+                    # If confidence is high enough, return result
+                    if primary_lang.prob >= self.confidence_threshold:
+                        return primary_lang.lang, primary_lang.prob
+                    
+                    # For lower confidence, try pattern matching as verification
+                    pattern_lang = self._detect_by_patterns(cleaned_text)
+                    if pattern_lang and pattern_lang == primary_lang.lang:
+                        # Pattern confirms langdetect result
+                        return primary_lang.lang, min(primary_lang.prob + 0.1, 1.0)
+                    elif pattern_lang:
+                        # Pattern suggests different language
+                        return pattern_lang, 0.8
+                    else:
+                        # Use langdetect result even with lower confidence
+                        return primary_lang.lang, primary_lang.prob
+                        
+            except LangDetectException as e:
+                logging.warning(f"Language detection failed: {e}")
         
         # Fallback to pattern-based detection
         pattern_lang = self._detect_by_patterns(cleaned_text)
@@ -94,11 +104,19 @@ class LanguageDetector:
         cleaned_text = self._clean_text(text)
         results = []
         
-        try:
-            detected_langs = detect_langs(cleaned_text)
-            results = [(lang.lang, lang.prob) for lang in detected_langs[:top_n]]
-        except LangDetectException:
-            # Fallback detection
+        if LANGDETECT_AVAILABLE:
+            try:
+                detected_langs = detect_langs(cleaned_text)
+                results = [(lang.lang, lang.prob) for lang in detected_langs[:top_n]]
+            except LangDetectException:
+                # Fallback detection
+                pattern_lang = self._detect_by_patterns(cleaned_text)
+                if pattern_lang:
+                    results = [(pattern_lang, 0.6)]
+                else:
+                    results = [('en', 0.3)]
+        else:
+            # Use pattern-based detection when langdetect not available
             pattern_lang = self._detect_by_patterns(cleaned_text)
             if pattern_lang:
                 results = [(pattern_lang, 0.6)]

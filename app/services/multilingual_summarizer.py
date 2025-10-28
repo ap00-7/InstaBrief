@@ -6,14 +6,38 @@ Supports 200+ languages using NLLB and mT5 models from Hugging Face
 import logging
 import os
 from typing import Dict, List, Optional, Tuple
-import torch
-from transformers import (
-    AutoTokenizer, AutoModelForSeq2SeqLM,
-    M2M100ForConditionalGeneration, M2M100Tokenizer,
-    pipeline
-)
-from langdetect import detect, detect_langs
 import warnings
+
+# Import dependencies with fallbacks
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    torch = None
+    TORCH_AVAILABLE = False
+
+try:
+    from transformers import (
+        AutoTokenizer, AutoModelForSeq2SeqLM,
+        M2M100ForConditionalGeneration, M2M100Tokenizer,
+        pipeline
+    )
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    AutoTokenizer = None
+    AutoModelForSeq2SeqLM = None
+    M2M100ForConditionalGeneration = None
+    M2M100Tokenizer = None
+    pipeline = None
+    TRANSFORMERS_AVAILABLE = False
+
+try:
+    from langdetect import detect, detect_langs
+    LANGDETECT_AVAILABLE = True
+except ImportError:
+    detect = None
+    detect_langs = None
+    LANGDETECT_AVAILABLE = False
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -28,6 +52,16 @@ class MultilingualSummarizer:
     """
     
     def __init__(self):
+        # Check if required dependencies are available
+        if not TORCH_AVAILABLE or not TRANSFORMERS_AVAILABLE:
+            print("Warning: PyTorch or Transformers not available. Multilingual features disabled.")
+            self.available = False
+            self.device = "cpu"
+            self.models = {}
+            self.tokenizers = {}
+            return
+        
+        self.available = True
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.models = {}
         self.tokenizers = {}
@@ -145,6 +179,10 @@ class MultilingualSummarizer:
         Detect the language of input text
         Returns: (language_code, confidence)
         """
+        # Return fallback if dependencies not available
+        if not LANGDETECT_AVAILABLE or not hasattr(self, 'available') or not self.available:
+            return 'en', 0.5
+            
         try:
             # Use langdetect for fast detection
             detected_langs = detect_langs(text)
@@ -161,6 +199,10 @@ class MultilingualSummarizer:
         """
         Translate text using NLLB model
         """
+        # Return original text if dependencies not available
+        if not hasattr(self, 'available') or not self.available:
+            return text
+            
         try:
             self._get_translator()
             
@@ -239,6 +281,16 @@ class MultilingualSummarizer:
         Returns:
             Dictionary with original and translated summaries
         """
+        # Return fallback if dependencies not available
+        if not hasattr(self, 'available') or not self.available:
+            return {
+                'original_summary': text[:max_length] + "..." if len(text) > max_length else text,
+                'translated_summary': text[:max_length] + "..." if len(text) > max_length else text,
+                'detected_language': 'en',
+                'target_language': target_language,
+                'error': 'Multilingual AI models not available'
+            }
+        
         try:
             # Detect input language
             detected_lang, confidence = self.detect_language(text)

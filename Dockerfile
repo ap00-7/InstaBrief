@@ -12,6 +12,10 @@ RUN apt-get update && apt-get install -y build-essential gcc g++ libffi-dev pyth
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Download spaCy models and NLTK data
+RUN python -m spacy download en_core_web_sm
+RUN python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords'); nltk.download('wordnet')"
+
 # Copy application code
 COPY . .
 
