@@ -22,7 +22,7 @@ class Settings(BaseSettings):
 
     # MongoDB configuration - read from environment
     mongo_uri: str = Field(
-        default="mongodb://mongo:27017/instabrief",
+        default="mongodb://localhost:27017/instabrief",  # Fallback for local development
         env="MONGODB_URI"
     )
     database_name: str = "instabrief"

@@ -10,10 +10,17 @@ from app.services.nlp import NLPService
 class StorageService:
     def __init__(self, mongo_uri: str | None = None) -> None:
         try:
-            self.mongo = AsyncIOMotorClient(mongo_uri or settings.mongo_uri)
+            # Add connection timeout to prevent hanging
+            self.mongo = AsyncIOMotorClient(
+                mongo_uri or settings.mongo_uri,
+                serverSelectionTimeoutMS=5000,  # 5 second timeout
+                connectTimeoutMS=5000,
+                socketTimeoutMS=5000
+            )
             self.db = self.mongo["instabrief"]
             self._nlp = NLPService()
             self.mongo_available = True
+            print("MongoDB connection initialized successfully")
         except Exception as e:
             print(f"MongoDB not available: {e}")
             self.mongo = None
