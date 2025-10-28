@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
 from pydantic import Field, field_validator
+from typing import Union
 import os
 
 
@@ -7,13 +8,13 @@ class Settings(BaseSettings):
     secret_key: str = Field(default="change-me", env="SECRET_KEY")
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24
-    cors_origins: list[str] = Field(default=["*"])
+    cors_origins: Union[str, list[str]] = Field(default="*", env="CORS_ORIGINS")
     
-    @field_validator("cors_origins", mode="before")
+    @field_validator("cors_origins", mode="after")
     @classmethod
     def parse_cors_origins(cls, v):
+        # Convert to list if it's a string
         if isinstance(v, str):
-            # Handle comma-separated string or single value
             if "," in v:
                 return [origin.strip() for origin in v.split(",")]
             return [v.strip()]
