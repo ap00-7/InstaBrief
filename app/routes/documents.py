@@ -544,24 +544,62 @@ Please refer to the original PowerPoint file for complete and accurate content i
         print(f"Extracted text length: {len(text_content)} characters")
         print(f"First 200 chars: {text_content[:200]}...")
         
-        # Generate summary with proper length
-        print(f"=== CALLING GENERATE_SUMMARY ===")
+        # Generate summary using AI summarization service
+        print(f"=== CALLING AI SUMMARIZATION SERVICE ===")
         print(f"Text length: {len(text_content)}, Summary type: {summary_type}, Length: {summary_length}%")
         
-        extractive_summary = generate_summary(text_content, "extractive", summary_length)
+        # Calculate max_length based on percentage (more generous for better summaries)
+        base_length = max(150, min(500, len(text_content) // 10))  # Base length between 150-500
+        max_length = int(base_length * (summary_length / 100.0) * 2)  # Allow 2x for better quality
+        max_length = max(100, min(800, max_length))  # Ensure reasonable bounds
+        
+        print(f"Calculated max_length: {max_length} characters")
+        
+        # Use the actual AI summarization service
+        summarizer = get_summarizer_service()
+        extractive_summary = summarizer.generate_summary(text_content, max_length)
         print(f"=== EXTRACTIVE SUMMARY GENERATED ===")
         print(f"Length: {len(extractive_summary)} chars")
         print(f"First 100 chars: {extractive_summary[:100]}...")
         
-        abstractive_summary = generate_summary(text_content, "abstractive", summary_length)
+        # For abstractive, try multilingual summarizer or fallback to extractive
+        try:
+            multilingual_result = summarizer.generate_multilingual_summary(
+                text_content, 
+                target_language="en",
+                max_length=max_length,
+                summary_type="both"
+            )
+            abstractive_summary = multilingual_result.get('abstractive_summary', extractive_summary)
+        except Exception as e:
+            print(f"Multilingual summarization failed, using extractive: {e}")
+            abstractive_summary = extractive_summary
+        
         print(f"=== ABSTRACTIVE SUMMARY GENERATED ===")
         print(f"Length: {len(abstractive_summary)} chars")
         
         print(f"Generated extractive summary length: {len(extractive_summary)} characters")
         print(f"Generated abstractive summary length: {len(abstractive_summary)} characters")
         
-        # Generate tags
-        tags = generate_tags(text_content, file.filename)
+        # Generate tags using AI keyword extraction
+        print(f"=== GENERATING TAGS ===")
+        try:
+            from app.services.keyword_extractor import KeywordExtractor
+            keyword_extractor = KeywordExtractor()
+            keywords = keyword_extractor.extract_keywords(text_content, num_keywords=8)
+            
+            # Extract keyword strings and combine with filename-based tags
+            ai_tags = [kw['keyword'].title() for kw in keywords[:5]]
+            filename_tags = generate_tags(text_content, file.filename)
+            
+            # Combine and deduplicate
+            all_tags = list(set(ai_tags + filename_tags))[:8]
+            tags = all_tags if all_tags else ['Document', 'Analysis']
+            
+            print(f"Generated {len(tags)} tags: {tags}")
+        except Exception as e:
+            print(f"AI keyword extraction failed, using fallback: {e}")
+            tags = generate_tags(text_content, file.filename)
         
         # Create document record
         document_id = str(uuid.uuid4())
