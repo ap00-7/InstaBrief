@@ -444,10 +444,10 @@ async def upload_document(
     print(f"Summary Type: {summary_type}")
     print(f"Summary Length: {summary_length}")
     
-    # Set timeouts tuned for Railway (keep total < ~25s to avoid 502 from proxy)
-    FILE_PROCESSING_TIMEOUT = 10  # seconds for file processing
-    AI_PROCESSING_TIMEOUT = 12    # seconds for AI operations
-    TOTAL_TIMEOUT = 25            # hard budget target for entire request
+    # Extended timeouts: allow up to ~2 minutes end-to-end
+    FILE_PROCESSING_TIMEOUT = 60  # seconds for file processing
+    AI_PROCESSING_TIMEOUT = 60    # seconds for AI operations
+    TOTAL_TIMEOUT = 120           # overall request budget
     
     try:
         # Validate file type
@@ -708,7 +708,7 @@ File size: {len(file_content)} bytes
         try:
             extractive_summary, abstractive_summary = await asyncio.wait_for(
                 generate_summaries_with_timeout(),
-                timeout=AI_PROCESSING_TIMEOUT + 3
+                timeout=AI_PROCESSING_TIMEOUT + 20
             )
         except asyncio.TimeoutError:
             print("AI processing timed out completely, using fallback")
