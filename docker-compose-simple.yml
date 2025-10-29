@@ -9,7 +9,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - MONGO_URI=mongodb://host.docker.internal:27017/instabrief
+      - MONGO_URI=mongodb+srv://akashpaul90766_db_user:7gZgXqm0VRqKXOmc@instabrief-cluster.cfzebhw.mongodb.net/?appName=instabrief-cluster
       - CORS_ORIGINS=["http://localhost:5173", "http://frontend:5173"]
     volumes:
       - .:/app

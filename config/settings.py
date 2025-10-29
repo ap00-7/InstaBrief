@@ -21,10 +21,7 @@ class Settings(BaseSettings):
         return v
 
     # MongoDB configuration - read from environment
-    mongo_uri: str = Field(
-        default="mongodb://localhost:27017/instabrief",  # Fallback for local development
-        env="MONGODB_URI"
-    )
+    mongo_uri: str = "mongodb+srv://akashpaul90766_db_user:7gZgXqm0VRqKXOmc@instabrief-cluster.cfzebhw.mongodb.net/?appName=instabrief-cluster"
     database_name: str = "instabrief"
 
     # Optional: SQLite fallback

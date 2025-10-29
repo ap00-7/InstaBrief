@@ -1,5 +1,7 @@
+version: '3.8'
+
 services:
-  # Backend API Service
+  # FastAPI Backend Service
   api:
     build:
       context: .
@@ -9,13 +11,14 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - MONGO_URI=mongodb+srv://akashpaul90766_db_user:7gZgXqm0VRqKXOmc@instabrief-cluster.cfzebhw.mongodb.net/?appName=instabrief-cluster
-      - CORS_ORIGINS=["http://localhost:5173", "http://frontend:5173"]
+      - MONGODB_URI=mongodb+srv://akashpaul90766_db_user:7gZgXqm0VRqKXOmc@instabrief-cluster.cfzebhw.mongodb.net/?appName=instabrief-cluster
+      - SECRET_KEY=your-secret-key-here
+      - JWT_SECRET=your-jwt-secret-here
+      - ENVIRONMENT=development
+      - CORS_ORIGINS=*
     depends_on:
       mongo:
         condition: service_healthy
-    volumes:
-      - .:/app
     networks:
       - instabrief-network
     healthcheck:
@@ -24,24 +27,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-
-  # Frontend Service
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: instabrief-frontend
-    restart: unless-stopped
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    command: sh -c "npm install && node node_modules/vite/bin/vite.js --host 0.0.0.0 --port 5173"
-    networks:
-      - instabrief-network
-    depends_on:
-      - api
 
   # MongoDB Service
   mongo:
@@ -54,6 +39,7 @@ services:
       - MONGO_INITDB_DATABASE=instabrief
     volumes:
       - mongo_data:/data/db
+      - ./mongo-init:/docker-entrypoint-initdb.d
     networks:
       - instabrief-network
     healthcheck:
@@ -63,6 +49,7 @@ services:
       retries: 5
       start_period: 30s
 
+  # LibreTranslate Service (Optional - for translation features)
   libretranslate:
     image: libretranslate/libretranslate:latest
     container_name: instabrief-translate
