@@ -3,7 +3,7 @@ import os
 import uuid
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends, Form
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 try:
     import PyPDF2
@@ -434,364 +434,143 @@ async def upload_document(
     summary_length: int = Form(default=10),
     target_language: str = Form(default="en")
 ):
-    """Upload and process a document with timeout handling"""
-    import asyncio
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
-    
-    print(f"=== UPLOAD REQUEST RECEIVED ===")
-    print(f"File: {file.filename}")
-    print(f"Content Type: {file.content_type}")
-    print(f"Summary Type: {summary_type}")
-    print(f"Summary Length: {summary_length}")
-    
-    # Extended timeouts: allow up to ~2 minutes end-to-end
-    FILE_PROCESSING_TIMEOUT = 60  # seconds for file processing
-    AI_PROCESSING_TIMEOUT = 60    # seconds for AI operations
-    TOTAL_TIMEOUT = 120           # overall request budget
-    
+    """Upload and process a document; stream keep-alives to avoid 502."""
+    import asyncio, json
+    import traceback
+    from concurrent.futures import ThreadPoolExecutor
+
     try:
-        # Validate file type
+        # Validate file type and read bytes up-front
         allowed_types = ['.pdf', '.docx', '.txt', '.pptx']
         file_ext = os.path.splitext(file.filename)[1].lower()
-        print(f"File extension: {file_ext}")
-        
         if file_ext not in allowed_types:
-            print(f"ERROR: Unsupported file type: {file_ext}")
             return {"error": f"Unsupported file type: {file_ext}. Allowed types: {allowed_types}"}
-        
-        # Read file content (limit size to avoid proxy and memory issues)
         file_content = await file.read()
-        MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 8 MB cap for prod stability
-        if len(file_content) > MAX_UPLOAD_BYTES:
-            return {"error": f"File too large. Limit is {MAX_UPLOAD_BYTES // (1024*1024)} MB"}
-        print(f"File size: {len(file_content)} bytes")
-        
-        # Extract text based on file type with timeout
-        async def extract_text_with_timeout():
-            """Extract text with timeout handling"""
-            if file_ext == '.pdf':
-                try:
-                    print(f"Attempting to extract text from PDF: {file.filename}")
-                    
-                    # Use thread pool for potentially slow PDF extraction
+
+        # Long processing budgets
+        FILE_PROCESSING_TIMEOUT = 60
+        AI_PROCESSING_TIMEOUT = 60
+
+        async def do_work() -> dict:
+            async def extract_text_with_timeout():
+                if file_ext == '.pdf':
                     with ThreadPoolExecutor(max_workers=1) as executor:
                         future = executor.submit(extract_pdf_text, file_content)
-                        try:
-                            text_content = await asyncio.wait_for(
-                                asyncio.wrap_future(future), 
-                                timeout=FILE_PROCESSING_TIMEOUT
-                            )
-                        except asyncio.TimeoutError:
-                            future.cancel()
-                            raise Exception("PDF extraction timed out")
-                    
-                    print(f"PDF extraction successful! Extracted {len(text_content)} characters")
-                    
-                    # Validate that we got actual content, not just whitespace
-                    if not text_content.strip() or len(text_content.strip()) < 50:
-                        raise Exception("Extracted text is too short or empty")
-                    
-                    return text_content
-                    
-                except Exception as e:
-                    print(f"PDF extraction failed: {str(e)}")
-                    # Only use fallback if extraction completely fails
-                    return f"""
-PDF Extraction Error for "{file.filename}":
-
-The PDF file could not be processed automatically. This could be due to:
-- Password protection
-- Scanned images without OCR text
-- Corrupted file format
-- Complex formatting
-- Processing timeout
-
-Please try:
-1. Converting to a text-based PDF
-2. Using a different file format (DOCX, TXT)
-3. Ensuring the file is not password protected
-
-Filename: {file.filename}
-File size: {len(file_content)} bytes
-"""
-            elif file_ext == '.docx':
-                try:
-                    print(f"Attempting to extract text from DOCX: {file.filename}")
-                    
-                    # Use thread pool for DOCX extraction
+                        return await asyncio.wait_for(asyncio.wrap_future(future), timeout=FILE_PROCESSING_TIMEOUT)
+                elif file_ext == '.docx':
+                    if docx is None:
+                        raise Exception("python-docx not available")
                     with ThreadPoolExecutor(max_workers=1) as executor:
                         future = executor.submit(extract_docx_text, file_content)
-                        try:
-                            text_content = await asyncio.wait_for(
-                                asyncio.wrap_future(future), 
-                                timeout=FILE_PROCESSING_TIMEOUT
-                            )
-                        except asyncio.TimeoutError:
-                            future.cancel()
-                            raise Exception("DOCX extraction timed out")
-                    
-                    print(f"DOCX extraction successful! Extracted {len(text_content)} characters")
-                    
-                    # Validate that we got actual content
-                    if not text_content.strip() or len(text_content.strip()) < 50:
-                        raise Exception("Extracted text is too short or empty")
-                    
-                    return text_content
-                    
-                except Exception as e:
-                    print(f"DOCX extraction failed: {str(e)}")
-                    # Only use fallback if extraction completely fails
-                    return f"""
-DOCX Extraction Error for "{file.filename}":
-
-The Word document could not be processed automatically. This could be due to:
-- Corrupted file format
-- Complex formatting or embedded objects
-- Password protection
-- Unsupported DOCX version
-- Processing timeout
-
-Please try:
-1. Saving as a simpler DOCX format
-2. Converting to TXT format
-3. Ensuring the file is not password protected
-
-Filename: {file.filename}
-File size: {len(file_content)} bytes
-"""
-            elif file_ext == '.pptx':
-                try:
-                    print(f"Attempting to extract text from PPTX: {file.filename}")
-                    
-                    # Use thread pool for PPTX extraction
+                        return await asyncio.wait_for(asyncio.wrap_future(future), timeout=FILE_PROCESSING_TIMEOUT)
+                elif file_ext == '.pptx':
+                    if Presentation is None:
+                        raise Exception("python-pptx not available")
                     with ThreadPoolExecutor(max_workers=1) as executor:
                         future = executor.submit(extract_pptx_text, file_content)
-                        try:
-                            text_content = await asyncio.wait_for(
-                                asyncio.wrap_future(future), 
-                                timeout=FILE_PROCESSING_TIMEOUT
-                            )
-                        except asyncio.TimeoutError:
-                            future.cancel()
-                            raise Exception("PPTX extraction timed out")
-                    
-                    print(f"PPTX extraction successful! Extracted {len(text_content)} characters")
-                    
-                    # Validate that we got actual content
-                    if not text_content.strip() or len(text_content.strip()) < 50:
-                        raise Exception("Extracted text is too short or empty")
-                    
-                    return text_content
-                    
-                except Exception as e:
-                    print(f"PPTX extraction failed: {str(e)}")
-                    # Only use fallback if extraction completely fails
-                    return f"""
-PPTX Extraction Error for "{file.filename}":
+                        return await asyncio.wait_for(asyncio.wrap_future(future), timeout=FILE_PROCESSING_TIMEOUT)
+                else:
+                    text = file_content.decode('utf-8', errors='ignore')
+                    if not text.strip() or len(text.strip()) < 20:
+                        raise Exception("Text content is too short or empty")
+                    return text
 
-The PowerPoint presentation could not be processed automatically. This could be due to:
-- Complex slide layouts with embedded objects
-- Password protection
-- Corrupted file format
-- Slides containing mostly images/graphics
-- Processing timeout
+            text_content = await extract_text_with_timeout()
+            if len(text_content) > 50000:
+                text_content = text_content[:50000]
 
-Please try:
-1. Saving as a simpler PPTX format
-2. Converting slide content to DOCX or TXT
-3. Ensuring the file is not password protected
+            base_length = max(150, min(500, len(text_content) // 10))
+            max_length = int(base_length * (summary_length / 100.0) * 2)
+            max_length = max(100, min(800, max_length))
 
-Filename: {file.filename}
-File size: {len(file_content)} bytes
-"""
-            elif file_ext == '.txt':
-                try:
-                    return file_content.decode('utf-8')
-                except UnicodeDecodeError:
-                    try:
-                        return file_content.decode('latin-1')
-                    except Exception:
-                        return file_content.decode('utf-8', errors='replace')
-            else:
-                raise Exception(f"Unsupported file type: {file_ext}")
-        
-        # Execute text extraction with timeout
-        try:
-            text_content = await asyncio.wait_for(
-                extract_text_with_timeout(),
-                timeout=FILE_PROCESSING_TIMEOUT + 5
-            )
-        except asyncio.TimeoutError:
-            print("Text extraction timed out")
-            return {"error": f"File processing timed out for {file.filename}. Please try a smaller file or different format."}
-        
-        # Cap extracted text length for AI processing to fit time budget
-        if len(text_content) > 50000:
-            text_content = text_content[:50000]
-        print(f"Extracted text length: {len(text_content)} characters")
-        print(f"First 200 chars: {text_content[:200]}...")
-        
-        # Generate summary using AI summarization service with timeout
-        print(f"=== CALLING AI SUMMARIZATION SERVICE ===")
-        print(f"Text length: {len(text_content)}, Summary type: {summary_type}, Length: {summary_length}%")
-        
-        # Calculate max_length based on percentage (more generous for better summaries)
-        base_length = max(150, min(500, len(text_content) // 10))  # Base length between 150-500
-        max_length = int(base_length * (summary_length / 100.0) * 2)  # Allow 2x for better quality
-        max_length = max(100, min(800, max_length))  # Ensure reasonable bounds
-        
-        print(f"Calculated max_length: {max_length} characters")
-        
-        # Use timeout wrapper for AI operations
-        async def generate_summaries_with_timeout():
-            """Generate summaries with timeout handling"""
-            try:
-                # Get summarizer with timeout
+            async def generate_summaries_with_timeout():
                 summarizer = get_summarizer_service()
                 if not summarizer:
                     raise Exception("Summarizer service not available")
-                
-                # Generate extractive summary with timeout
                 with ThreadPoolExecutor(max_workers=1) as executor:
                     future = executor.submit(summarizer.generate_summary, text_content, max_length)
-                    try:
-                        extractive_summary = await asyncio.wait_for(
-                            asyncio.wrap_future(future), 
-                            timeout=AI_PROCESSING_TIMEOUT
-                        )
-                    except asyncio.TimeoutError:
-                        future.cancel()
-                        raise Exception("Extractive summarization timed out")
-                
-                print(f"=== EXTRACTIVE SUMMARY GENERATED ===")
-                print(f"Length: {len(extractive_summary)} chars")
-                print(f"First 100 chars: {extractive_summary[:100]}...")
-                
-                # For abstractive, try with shorter timeout or fallback
-                abstractive_summary = extractive_summary  # Default fallback
+                    extractive_summary = await asyncio.wait_for(asyncio.wrap_future(future), timeout=AI_PROCESSING_TIMEOUT)
+                abstractive_summary = extractive_summary
                 try:
-                    # Try multilingual summarization with shorter timeout
                     with ThreadPoolExecutor(max_workers=1) as executor:
                         future = executor.submit(
                             summarizer.generate_multilingual_summary,
-                            text_content, 
+                            text_content,
                             target_language="en",
                             max_length=max_length,
                             summary_type="both"
                         )
-                        try:
-                            multilingual_result = await asyncio.wait_for(
-                                asyncio.wrap_future(future), 
-                                timeout=20  # Shorter timeout for abstractive
-                            )
-                            abstractive_summary = multilingual_result.get('abstractive_summary', extractive_summary)
-                        except asyncio.TimeoutError:
-                            future.cancel()
-                            print("Multilingual summarization timed out, using extractive")
-                            abstractive_summary = extractive_summary
-                except Exception as e:
-                    print(f"Multilingual summarization failed, using extractive: {e}")
-                    abstractive_summary = extractive_summary
-                
-                print(f"=== ABSTRACTIVE SUMMARY GENERATED ===")
-                print(f"Length: {len(abstractive_summary)} chars")
-                
+                        multilingual_result = await asyncio.wait_for(asyncio.wrap_future(future), timeout=AI_PROCESSING_TIMEOUT)
+                        abstractive_summary = multilingual_result.get('abstractive_summary', extractive_summary)
+                except Exception:
+                    pass
                 return extractive_summary, abstractive_summary
-                
-            except Exception as e:
-                print(f"AI summarization failed: {e}")
-                # Fallback to simple text truncation
+
+            try:
+                extractive_summary, abstractive_summary = await generate_summaries_with_timeout()
+            except Exception:
                 fallback_summary = generate_fallback_summary(text_content, max_length)
-                return fallback_summary, fallback_summary
-        
-        # Execute with timeout
-        try:
-            extractive_summary, abstractive_summary = await asyncio.wait_for(
-                generate_summaries_with_timeout(),
-                timeout=AI_PROCESSING_TIMEOUT + 20
-            )
-        except asyncio.TimeoutError:
-            print("AI processing timed out completely, using fallback")
-            fallback_summary = generate_fallback_summary(text_content, max_length)
-            extractive_summary = abstractive_summary = fallback_summary
-        
-        print(f"Generated extractive summary length: {len(extractive_summary)} characters")
-        print(f"Generated abstractive summary length: {len(abstractive_summary)} characters")
-        
-        # Generate tags using AI keyword extraction
-        print(f"=== GENERATING TAGS ===")
-        try:
-            from app.services.keyword_extractor import KeywordExtractor
-            keyword_extractor = KeywordExtractor()
-            keywords = keyword_extractor.extract_keywords(text_content, num_keywords=8)
-            
-            # Extract keyword strings and combine with filename-based tags
-            ai_tags = [kw['keyword'].title() for kw in keywords[:5]]
-            filename_tags = generate_tags(text_content, file.filename)
-            
-            # Combine and deduplicate
-            all_tags = list(set(ai_tags + filename_tags))[:8]
-            tags = all_tags if all_tags else ['Document', 'Analysis']
-            
-            print(f"Generated {len(tags)} tags: {tags}")
-        except Exception as e:
-            print(f"AI keyword extraction failed, using fallback: {e}")
-            tags = generate_tags(text_content, file.filename)
-        
-        # Create document record
-        document_id = str(uuid.uuid4())
-        document_data = {
-            "id": document_id,
-            "title": file.filename,
-            "original_filename": file.filename,
-            "content": text_content,
-            "summary": {
-                "extractive": extractive_summary,
-                "abstractive": abstractive_summary
-            },
-            "tags": tags,
-            "created_at": datetime.utcnow(),
-            "file_size": len(file_content),
-            "file_type": file_ext,
-            "owner_id": "test_user",
-            "file_data": file_content
-        }
-        
-        # Save to MongoDB with timeout
-        print(f"Saving document to MongoDB: {document_data['title']}")
-        try:
-            saved_id = await asyncio.wait_for(
-                get_storage().save_document(document_data),
-                timeout=10  # 10 second timeout for database save
-            )
-            print(f"Document saved with ID: {saved_id}")
-        except asyncio.TimeoutError:
-            print("Database save timed out")
-            return {"error": "Database operation timed out. Please try again."}
-        except Exception as e:
-            print(f"Database save failed: {e}")
-            # Continue anyway, return the data without saving
-            saved_id = document_data['id']
-        
-        # Return response
-        return {
-            "id": saved_id,
-            "title": file.filename,
-            "original_filename": file.filename,
-            "content": text_content[:500] + "..." if len(text_content) > 500 else text_content,
-            "summary": {
-                "extractive": extractive_summary,
-                "abstractive": abstractive_summary
-            },
-            "tags": tags,
-            "created_at": document_data["created_at"].isoformat(),
-            "file_size": len(file_content),
-            "file_type": file_ext
-        }
-        
+                extractive_summary = abstractive_summary = fallback_summary
+
+            try:
+                from app.services.keyword_extractor import KeywordExtractor
+                keyword_extractor = KeywordExtractor()
+                keywords = keyword_extractor.extract_keywords(text_content, num_keywords=8)
+                ai_tags = [kw['keyword'].title() for kw in keywords[:5]]
+                filename_tags = generate_tags(text_content, file.filename)
+                tags = list(set(ai_tags + filename_tags))[:8] or ['Document', 'Analysis']
+            except Exception:
+                tags = generate_tags(text_content, file.filename)
+
+            document_id = str(uuid.uuid4())
+            document_data = {
+                "id": document_id,
+                "title": file.filename,
+                "original_filename": file.filename,
+                "content": text_content,
+                "summary": {"extractive": extractive_summary, "abstractive": abstractive_summary},
+                "tags": tags,
+                "created_at": datetime.utcnow(),
+                "file_size": len(file_content),
+                "file_type": file_ext,
+                "owner_id": "test_user",
+                "file_data": file_content
+            }
+            try:
+                saved_id = await get_storage().save_document(document_data)
+            except Exception:
+                saved_id = document_data['id']
+
+            return {
+                "id": saved_id,
+                "title": file.filename,
+                "original_filename": file.filename,
+                "content": text_content[:500] + "..." if len(text_content) > 500 else text_content,
+                "summary": {"extractive": extractive_summary, "abstractive": abstractive_summary},
+                "tags": tags,
+                "created_at": document_data["created_at"].isoformat(),
+                "file_size": len(file_content),
+                "file_type": file_ext
+            }
+
+        async def sse_stream():
+            # Run the heavy work while sending keepalives every 2s
+            try:
+                task = asyncio.create_task(do_work())
+                while not task.done():
+                    yield b": keepalive\n\n"
+                    await asyncio.sleep(2)
+                result = await task
+                yield ("data: " + json.dumps(result) + "\n\n").encode()
+            except Exception as e:
+                print(f"ERROR in SSE stream: {str(e)}")
+                traceback.print_exc()
+                error_msg = {"error": str(e)}
+                yield ("data: " + json.dumps(error_msg) + "\n\n").encode()
+
+        return StreamingResponse(sse_stream(), media_type="text/event-stream")
     except Exception as e:
-        print(f"ERROR in upload: {str(e)}")
-        import traceback
+        print(f"ERROR in upload endpoint: {str(e)}")
         traceback.print_exc()
         return {"error": str(e)}
 
