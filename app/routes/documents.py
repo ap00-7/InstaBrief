@@ -444,10 +444,10 @@ async def upload_document(
     print(f"Summary Type: {summary_type}")
     print(f"Summary Length: {summary_length}")
     
-    # Set timeouts for different operations
-    FILE_PROCESSING_TIMEOUT = 30  # 30 seconds for file processing
-    AI_PROCESSING_TIMEOUT = 45    # 45 seconds for AI operations
-    TOTAL_TIMEOUT = 90           # 90 seconds total
+    # Set timeouts tuned for Railway (keep total < ~25s to avoid 502 from proxy)
+    FILE_PROCESSING_TIMEOUT = 10  # seconds for file processing
+    AI_PROCESSING_TIMEOUT = 12    # seconds for AI operations
+    TOTAL_TIMEOUT = 25            # hard budget target for entire request
     
     try:
         # Validate file type
@@ -459,8 +459,11 @@ async def upload_document(
             print(f"ERROR: Unsupported file type: {file_ext}")
             return {"error": f"Unsupported file type: {file_ext}. Allowed types: {allowed_types}"}
         
-        # Read file content
+        # Read file content (limit size to avoid proxy and memory issues)
         file_content = await file.read()
+        MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 8 MB cap for prod stability
+        if len(file_content) > MAX_UPLOAD_BYTES:
+            return {"error": f"File too large. Limit is {MAX_UPLOAD_BYTES // (1024*1024)} MB"}
         print(f"File size: {len(file_content)} bytes")
         
         # Extract text based on file type with timeout
@@ -622,6 +625,9 @@ File size: {len(file_content)} bytes
             print("Text extraction timed out")
             return {"error": f"File processing timed out for {file.filename}. Please try a smaller file or different format."}
         
+        # Cap extracted text length for AI processing to fit time budget
+        if len(text_content) > 50000:
+            text_content = text_content[:50000]
         print(f"Extracted text length: {len(text_content)} characters")
         print(f"First 200 chars: {text_content[:200]}...")
         
@@ -702,7 +708,7 @@ File size: {len(file_content)} bytes
         try:
             extractive_summary, abstractive_summary = await asyncio.wait_for(
                 generate_summaries_with_timeout(),
-                timeout=AI_PROCESSING_TIMEOUT + 10
+                timeout=AI_PROCESSING_TIMEOUT + 3
             )
         except asyncio.TimeoutError:
             print("AI processing timed out completely, using fallback")
