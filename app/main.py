@@ -97,27 +97,35 @@ if settings.environment == "development" and os.path.exists("frontend"):
 logger.info("Including routers...")
 if auth_router:
     app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
+    app.include_router(auth_router, prefix="/auth", tags=["auth-compat"])  # non-prefixed for prod compatibility
     logger.info("✓ Auth router included")
 if articles_router:
     app.include_router(articles_router, prefix="/api/articles", tags=["articles"])
+    app.include_router(articles_router, prefix="/articles", tags=["articles-compat"])  # non-prefixed for prod compatibility
     logger.info("✓ Articles router included")
 if documents_router:
     app.include_router(documents_router, prefix="/api/documents", tags=["documents"])
+    app.include_router(documents_router, prefix="/documents", tags=["documents-compat"])  # non-prefixed for prod compatibility
     logger.info("✓ Documents router included")
 if summarize_router:
     app.include_router(summarize_router, prefix="/api/summarize", tags=["summarize"])
+    app.include_router(summarize_router, prefix="/summarize", tags=["summarize-compat"])  # non-prefixed for prod compatibility
     logger.info("✓ Summarize router included")
 if feedback_router:
     app.include_router(feedback_router, prefix="/api/feedback", tags=["feedback"])
+    app.include_router(feedback_router, prefix="/feedback", tags=["feedback-compat"])  # non-prefixed for prod compatibility
     logger.info("✓ Feedback router included")
 if users_router:
     app.include_router(users_router, prefix="/api/users", tags=["users"])
+    app.include_router(users_router, prefix="/users", tags=["users-compat"])  # non-prefixed for prod compatibility
     logger.info("✓ Users router included")
 if tags_router:
     app.include_router(tags_router, prefix="/api/tags", tags=["tags"])
+    app.include_router(tags_router, prefix="/tags", tags=["tags-compat"])  # non-prefixed for prod compatibility
     logger.info("✓ Tags router included")
 if support_router:
     app.include_router(support_router, prefix="/api/support", tags=["support"])
+    app.include_router(support_router, prefix="/support", tags=["support-compat"])  # non-prefixed for prod compatibility
     logger.info("✓ Support router included")
 
 logger.info("InstaBrief API setup complete!")
