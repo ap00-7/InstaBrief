@@ -573,50 +573,45 @@ async def upload_document(
             max_length = max(100, min(800, max_length))
             print(f"Summary max_length calculated: {max_length} (from {summary_length}% setting)")
 
-            # Step 3: Generate summaries with AI
+            # Step 3: Generate summaries with AI (using free Hugging Face models)
             print(f"Step 3: Generating AI summaries...")
             async def generate_summaries_with_timeout():
                 try:
-                    summarizer = get_summarizer_service()
-                    if not summarizer:
-                        raise Exception("Summarizer service not initialized on server")
+                    # Use new SmartSummarizer (no local memory needed!)
+                    from app.services.smart_summarizer import SmartSummarizer
+                    summarizer = SmartSummarizer()
                     
-                    # Generate extractive summary
-                    print(f"Generating extractive summary...")
+                    print(f"Generating both extractive and abstractive summaries...")
                     with ThreadPoolExecutor(max_workers=1) as executor:
-                        future = executor.submit(summarizer.generate_summary, text_content, max_length)
-                        extractive_summary = await asyncio.wait_for(
+                        # Generate both summaries efficiently
+                        future = executor.submit(
+                            summarizer.generate_both_summaries, 
+                            text_content, 
+                            max_length
+                        )
+                        summaries = await asyncio.wait_for(
                             asyncio.wrap_future(future), 
                             timeout=AI_PROCESSING_TIMEOUT
                         )
-                    print(f"Extractive summary generated: {len(extractive_summary)} characters")
                     
-                    # Generate abstractive summary (with fallback)
-                    abstractive_summary = extractive_summary
-                    try:
-                        print(f"Generating multilingual/abstractive summary...")
-                        with ThreadPoolExecutor(max_workers=1) as executor:
-                            future = executor.submit(
-                                summarizer.generate_multilingual_summary,
-                                text_content,
-                                target_language="en",
-                                max_length=max_length,
-                                summary_type="both"
-                            )
-                            multilingual_result = await asyncio.wait_for(
-                                asyncio.wrap_future(future), 
-                                timeout=AI_PROCESSING_TIMEOUT
-                            )
-                            abstractive_summary = multilingual_result.get('abstractive_summary', extractive_summary)
-                            print(f"Abstractive summary generated: {len(abstractive_summary)} characters")
-                    except Exception as e:
-                        print(f"Multilingual summary generation failed (using extractive as fallback): {str(e)}")
+                    extractive_summary = summaries.get('extractive', '')
+                    abstractive_summary = summaries.get('abstractive', '')
+                    
+                    print(f"Extractive summary generated: {len(extractive_summary)} characters")
+                    print(f"Abstractive summary generated: {len(abstractive_summary)} characters")
+                    
+                    # Ensure we have valid summaries
+                    if not extractive_summary or len(extractive_summary) < 10:
+                        extractive_summary = text_content[:max_length] + "..."
+                    if not abstractive_summary or len(abstractive_summary) < 10:
+                        abstractive_summary = extractive_summary
                     
                     return extractive_summary, abstractive_summary
                     
                 except asyncio.TimeoutError:
                     raise Exception(f"AI summarization timed out after {AI_PROCESSING_TIMEOUT}s. Document may be too complex.")
                 except Exception as e:
+                    print(f"SmartSummarizer error: {str(e)}")
                     raise Exception(f"AI summarization failed: {str(e)}")
 
             # Try AI summarization with fallback
@@ -689,144 +684,107 @@ async def upload_document(
 
         async def sse_stream():
             """
-            Server-Sent Events stream with proper Railway compatibility.
-            Sends progress updates and keepalives to prevent timeouts.
+            Simplified SSE stream that sends progress updates and ONE final result.
+            Frontend should listen for message with data.id to get the complete result.
             """
             try:
                 print(f"Starting SSE stream...")
                 
-                # Send initial progress update
-                progress_msg = {"status": "processing", "progress": 0, "message": "Starting document processing..."}
-                yield f"data: {json.dumps(progress_msg)}\n\n".encode('utf-8')
+                # Send initial progress
+                yield f"data: {json.dumps({'progress': 0, 'message': 'Starting...', 'status': 'processing'})}\n\n".encode('utf-8')
                 
                 # Create task for processing
                 task = asyncio.create_task(do_work())
                 keepalive_count = 0
                 elapsed_time = 0
                 
-                # Estimated phases with progress percentages
+                # Progress phases
                 progress_phases = [
-                    (5, "Reading file..."),
-                    (15, "Extracting text from document..."),
-                    (30, "Analyzing content..."),
-                    (50, "Generating AI summary..."),
-                    (70, "Processing keywords and tags..."),
-                    (85, "Saving document..."),
-                    (95, "Finalizing..."),
+                    (10, "Reading file..."),
+                    (25, "Extracting text..."),
+                    (40, "Analyzing content..."),
+                    (60, "Generating summary..."),
+                    (80, "Extracting keywords..."),
+                    (90, "Saving document..."),
                 ]
                 current_phase = 0
                 
-                # Send keepalives and progress updates while processing
+                # Send keepalives and progress while processing
                 while not task.done():
                     keepalive_count += 1
                     elapsed_time += KEEPALIVE_INTERVAL
                     
-                    # Send progress update every 5 keepalives (~5 seconds)
+                    # Progress update every 5 seconds
                     if keepalive_count % 5 == 0 and current_phase < len(progress_phases):
                         progress, message = progress_phases[current_phase]
-                        progress_msg = {
-                            "status": "processing",
-                            "progress": progress,
-                            "message": message,
-                            "elapsed_time": elapsed_time
-                        }
-                        yield f"data: {json.dumps(progress_msg)}\n\n".encode('utf-8')
+                        yield f"data: {json.dumps({'progress': progress, 'message': message, 'status': 'processing'})}\n\n".encode('utf-8')
                         current_phase += 1
-                        print(f"Sent progress update: {progress}% - {message}")
+                        print(f"Progress: {progress}% - {message}")
                     else:
-                        # Send keepalive comment (ignored by EventSource but keeps connection alive)
-                        yield f": keepalive {keepalive_count}\n\n".encode('utf-8')
-                        print(f"Sent keepalive #{keepalive_count} ({elapsed_time}s elapsed)")
+                        # Keepalive (colon means comment, ignored by EventSource)
+                        yield f": keepalive\n\n".encode('utf-8')
                     
                     await asyncio.sleep(KEEPALIVE_INTERVAL)
                 
-                # Get the result
+                # Get result
                 result = await task
-                print(f"Processing complete, sending result...")
-                print(f"Result size: {len(json.dumps(result))} bytes")
+                print(f"Processing complete! Sending final result...")
                 
-                # IMPORTANT: Railway has issues with large SSE messages
-                # Split the response into smaller chunks to ensure delivery
+                # Ensure summary structure is correct
+                if "summary" not in result or not isinstance(result["summary"], dict):
+                    print("WARNING: Invalid summary structure, creating default")
+                    result["summary"] = {
+                        "extractive": result.get("content", "")[:500],
+                        "abstractive": result.get("content", "")[:500]
+                    }
                 
-                # First, send a completion signal
-                completion_msg = {
-                    "status": "complete",
-                    "progress": 100,
-                    "message": "Processing finished, sending results...",
-                    "processing_time": elapsed_time
-                }
-                yield f"data: {json.dumps(completion_msg)}\n\n".encode('utf-8')
-                print(f"Sent completion signal")
+                # Ensure both summary types exist
+                if "extractive" not in result["summary"]:
+                    result["summary"]["extractive"] = result["summary"].get("abstractive", "")
+                if "abstractive" not in result["summary"]:
+                    result["summary"]["abstractive"] = result["summary"].get("extractive", "")
                 
-                # Small delay to ensure the completion message is sent
-                await asyncio.sleep(0.1)
+                print(f"Summary validation passed:")
+                print(f"  - Extractive: {len(result['summary']['extractive'])} chars")
+                print(f"  - Abstractive: {len(result['summary']['abstractive'])} chars")
                 
-                # Send basic info first
-                basic_info = {
-                    "status": "success",
-                    "type": "metadata",
+                # Send ONE complete result with ALL data
+                # Frontend should check for presence of 'id' field to know processing is done
+                final_result = {
                     "id": result["id"],
                     "title": result["title"],
                     "original_filename": result["original_filename"],
                     "file_size": result["file_size"],
                     "file_type": result["file_type"],
                     "created_at": result["created_at"],
-                    "processing_time": elapsed_time
-                }
-                yield f"data: {json.dumps(basic_info)}\n\n".encode('utf-8')
-                print(f"Sent metadata")
-                
-                # Small delay
-                await asyncio.sleep(0.1)
-                
-                # Send summary separately (this is the large part)
-                summary_data = {
-                    "status": "success",
-                    "type": "summary",
-                    "summary": result["summary"]
-                }
-                yield f"data: {json.dumps(summary_data)}\n\n".encode('utf-8')
-                print(f"Sent summary ({len(json.dumps(result['summary']))} bytes)")
-                
-                # Small delay
-                await asyncio.sleep(0.1)
-                
-                # Send tags and content
-                additional_data = {
-                    "status": "success",
-                    "type": "additional",
+                    "summary": {
+                        "extractive": result["summary"]["extractive"],
+                        "abstractive": result["summary"]["abstractive"]
+                    },
                     "tags": result["tags"],
-                    "content": result.get("content", "")
+                    "content": result.get("content", ""),
+                    "processing_time": elapsed_time,
+                    "status": "complete",
+                    "message": "Document processed successfully!"
                 }
-                yield f"data: {json.dumps(additional_data)}\n\n".encode('utf-8')
-                print(f"Sent tags and content")
                 
-                # Small delay
-                await asyncio.sleep(0.1)
-                
-                # Send final done signal
-                done_msg = {
-                    "status": "done",
-                    "message": "Document processed successfully!",
-                    "id": result["id"]
-                }
-                yield f"data: {json.dumps(done_msg)}\n\n".encode('utf-8')
-                print(f"Sent done signal (total time: {elapsed_time}s)")
-                print(f"All data sent successfully!")
+                # Send the final result
+                yield f"data: {json.dumps(final_result)}\n\n".encode('utf-8')
+                print(f"✓ Final result sent successfully (total time: {elapsed_time}s)")
+                print(f"✓ Result includes id={result['id']}, summary.extractive={len(final_result['summary']['extractive'])} chars")
                 
             except Exception as e:
                 error_trace = traceback.format_exc()
                 print(f"ERROR in SSE stream:\n{error_trace}")
                 
-                # Send error as data event
+                # Send error
                 error_msg = {
                     "status": "error",
                     "error": str(e),
-                    "message": "An error occurred during document processing. Please try again or contact support if the issue persists.",
-                    "detail": str(e)
+                    "message": f"Processing failed: {str(e)}",
+                    "detail": error_trace
                 }
-                error_line = f"data: {json.dumps(error_msg)}\n\n"
-                yield error_line.encode('utf-8')
+                yield f"data: {json.dumps(error_msg)}\n\n".encode('utf-8')
 
         # Return streaming response with proper headers for Railway
         return StreamingResponse(
