@@ -743,17 +743,76 @@ async def upload_document(
                 # Get the result
                 result = await task
                 print(f"Processing complete, sending result...")
+                print(f"Result size: {len(json.dumps(result))} bytes")
                 
-                # Add success status to result
-                result["status"] = "success"
-                result["progress"] = 100
-                result["message"] = "Document processed successfully!"
-                result["processing_time"] = elapsed_time
+                # IMPORTANT: Railway has issues with large SSE messages
+                # Split the response into smaller chunks to ensure delivery
                 
-                # Send the final result as data event
-                data_line = f"data: {json.dumps(result)}\n\n"
-                yield data_line.encode('utf-8')
-                print(f"Result sent successfully (total time: {elapsed_time}s)")
+                # First, send a completion signal
+                completion_msg = {
+                    "status": "complete",
+                    "progress": 100,
+                    "message": "Processing finished, sending results...",
+                    "processing_time": elapsed_time
+                }
+                yield f"data: {json.dumps(completion_msg)}\n\n".encode('utf-8')
+                print(f"Sent completion signal")
+                
+                # Small delay to ensure the completion message is sent
+                await asyncio.sleep(0.1)
+                
+                # Send basic info first
+                basic_info = {
+                    "status": "success",
+                    "type": "metadata",
+                    "id": result["id"],
+                    "title": result["title"],
+                    "original_filename": result["original_filename"],
+                    "file_size": result["file_size"],
+                    "file_type": result["file_type"],
+                    "created_at": result["created_at"],
+                    "processing_time": elapsed_time
+                }
+                yield f"data: {json.dumps(basic_info)}\n\n".encode('utf-8')
+                print(f"Sent metadata")
+                
+                # Small delay
+                await asyncio.sleep(0.1)
+                
+                # Send summary separately (this is the large part)
+                summary_data = {
+                    "status": "success",
+                    "type": "summary",
+                    "summary": result["summary"]
+                }
+                yield f"data: {json.dumps(summary_data)}\n\n".encode('utf-8')
+                print(f"Sent summary ({len(json.dumps(result['summary']))} bytes)")
+                
+                # Small delay
+                await asyncio.sleep(0.1)
+                
+                # Send tags and content
+                additional_data = {
+                    "status": "success",
+                    "type": "additional",
+                    "tags": result["tags"],
+                    "content": result.get("content", "")
+                }
+                yield f"data: {json.dumps(additional_data)}\n\n".encode('utf-8')
+                print(f"Sent tags and content")
+                
+                # Small delay
+                await asyncio.sleep(0.1)
+                
+                # Send final done signal
+                done_msg = {
+                    "status": "done",
+                    "message": "Document processed successfully!",
+                    "id": result["id"]
+                }
+                yield f"data: {json.dumps(done_msg)}\n\n".encode('utf-8')
+                print(f"Sent done signal (total time: {elapsed_time}s)")
+                print(f"All data sent successfully!")
                 
             except Exception as e:
                 error_trace = traceback.format_exc()

@@ -372,6 +372,9 @@
 
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
+                
+                // Track partial results (multi-part response from Railway)
+                let partialResult = {};
 
                 while (true) {
                     const { done, value } = await reader.read();
@@ -386,9 +389,30 @@
                             
                             if (data.status === 'processing') {
                                 updateProgress(data.progress, data.message);
+                            } else if (data.status === 'complete') {
+                                updateProgress(100, data.message);
+                                log('Processing complete, receiving results...');
                             } else if (data.status === 'success') {
-                                updateProgress(100, 'Complete!');
-                                showSuccess(data);
+                                // Handle multi-part success response
+                                if (data.type === 'metadata') {
+                                    // Store metadata
+                                    partialResult = { ...partialResult, ...data };
+                                    log('✓ Received metadata');
+                                } else if (data.type === 'summary') {
+                                    // Store summary
+                                    partialResult.summary = data.summary;
+                                    log('✓ Received summary (' + JSON.stringify(data.summary).length + ' bytes)');
+                                } else if (data.type === 'additional') {
+                                    // Store tags and content
+                                    partialResult.tags = data.tags;
+                                    partialResult.content = data.content;
+                                    log('✓ Received tags and content');
+                                }
+                            } else if (data.status === 'done') {
+                                // All parts received, show final result
+                                updateProgress(100, data.message);
+                                log('✓ All data received, displaying results...');
+                                showSuccess(partialResult);
                             } else if (data.status === 'error' || data.error) {
                                 showError(data.error || data.message);
                             }
