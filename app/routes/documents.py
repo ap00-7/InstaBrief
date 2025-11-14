@@ -97,6 +97,56 @@ async def documents_health():
     """Health check for documents router"""
     return {"status": "ok", "message": "Documents router is working"}
 
+@router.get("/test-stream")
+async def test_stream():
+    """
+    Test endpoint to verify Server-Sent Events streaming works on Railway.
+    This helps debug connectivity and buffering issues.
+    """
+    import asyncio
+    import json
+    
+    async def test_sse_stream():
+        """Simple test stream that sends updates every second for 10 seconds"""
+        try:
+            for i in range(1, 11):
+                message = {
+                    "status": "testing",
+                    "count": i,
+                    "message": f"Test message {i}/10",
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                yield f"data: {json.dumps(message)}\n\n".encode('utf-8')
+                print(f"Sent test message {i}/10")
+                await asyncio.sleep(1)
+            
+            # Send final message
+            final_message = {
+                "status": "complete",
+                "message": "Stream test completed successfully!",
+                "total_messages": 10
+            }
+            yield f"data: {json.dumps(final_message)}\n\n".encode('utf-8')
+            print("Stream test completed")
+            
+        except Exception as e:
+            error_message = {
+                "status": "error",
+                "error": str(e)
+            }
+            yield f"data: {json.dumps(error_message)}\n\n".encode('utf-8')
+    
+    return StreamingResponse(
+        test_sse_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Content-Type": "text/event-stream",
+        }
+    )
+
 # Old translate endpoint removed - using the improved version below with Google Translate and MyMemory support
 
 @router.get("/test-length/{length}")
@@ -434,84 +484,151 @@ async def upload_document(
     summary_length: int = Form(default=10),
     target_language: str = Form(default="en")
 ):
-    """Upload and process a document; stream keep-alives to avoid 502."""
-    import asyncio, json
+    """
+    Upload and process a document with proper streaming for Railway deployment.
+    Handles long-running AI processing without timeouts.
+    """
+    import asyncio
+    import json
     import traceback
     from concurrent.futures import ThreadPoolExecutor
+    
+    print(f"\n{'='*80}")
+    print(f"UPLOAD REQUEST - File: {file.filename}, Type: {summary_type}, Length: {summary_length}%, Lang: {target_language}")
+    print(f"{'='*80}\n")
 
     try:
         # Validate file type and read bytes up-front
         allowed_types = ['.pdf', '.docx', '.txt', '.pptx']
         file_ext = os.path.splitext(file.filename)[1].lower()
         if file_ext not in allowed_types:
-            return {"error": f"Unsupported file type: {file_ext}. Allowed types: {allowed_types}"}
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file type: {file_ext}. Allowed types: {', '.join(allowed_types)}"
+            )
+        
+        print(f"Reading file content...")
         file_content = await file.read()
+        print(f"File read successfully: {len(file_content)} bytes")
 
-        # Long processing budgets
-        FILE_PROCESSING_TIMEOUT = 60
-        AI_PROCESSING_TIMEOUT = 60
+        # Generous timeouts for Railway
+        FILE_PROCESSING_TIMEOUT = 120  # 2 minutes for file processing
+        AI_PROCESSING_TIMEOUT = 180     # 3 minutes for AI processing
+        KEEPALIVE_INTERVAL = 1          # Send keepalive every 1 second
 
         async def do_work() -> dict:
+            """Main processing function with comprehensive error handling"""
+            
+            # Step 1: Extract text from document
+            print(f"Step 1: Extracting text from {file_ext} file...")
             async def extract_text_with_timeout():
-                if file_ext == '.pdf':
-                    with ThreadPoolExecutor(max_workers=1) as executor:
-                        future = executor.submit(extract_pdf_text, file_content)
-                        return await asyncio.wait_for(asyncio.wrap_future(future), timeout=FILE_PROCESSING_TIMEOUT)
-                elif file_ext == '.docx':
-                    if docx is None:
-                        raise Exception("python-docx not available")
-                    with ThreadPoolExecutor(max_workers=1) as executor:
-                        future = executor.submit(extract_docx_text, file_content)
-                        return await asyncio.wait_for(asyncio.wrap_future(future), timeout=FILE_PROCESSING_TIMEOUT)
-                elif file_ext == '.pptx':
-                    if Presentation is None:
-                        raise Exception("python-pptx not available")
-                    with ThreadPoolExecutor(max_workers=1) as executor:
-                        future = executor.submit(extract_pptx_text, file_content)
-                        return await asyncio.wait_for(asyncio.wrap_future(future), timeout=FILE_PROCESSING_TIMEOUT)
-                else:
-                    text = file_content.decode('utf-8', errors='ignore')
-                    if not text.strip() or len(text.strip()) < 20:
-                        raise Exception("Text content is too short or empty")
-                    return text
+                try:
+                    if file_ext == '.pdf':
+                        with ThreadPoolExecutor(max_workers=1) as executor:
+                            future = executor.submit(extract_pdf_text, file_content)
+                            return await asyncio.wait_for(
+                                asyncio.wrap_future(future), 
+                                timeout=FILE_PROCESSING_TIMEOUT
+                            )
+                    elif file_ext == '.docx':
+                        if docx is None:
+                            raise Exception("python-docx library not available on server")
+                        with ThreadPoolExecutor(max_workers=1) as executor:
+                            future = executor.submit(extract_docx_text, file_content)
+                            return await asyncio.wait_for(
+                                asyncio.wrap_future(future), 
+                                timeout=FILE_PROCESSING_TIMEOUT
+                            )
+                    elif file_ext == '.pptx':
+                        if Presentation is None:
+                            raise Exception("python-pptx library not available on server")
+                        with ThreadPoolExecutor(max_workers=1) as executor:
+                            future = executor.submit(extract_pptx_text, file_content)
+                            return await asyncio.wait_for(
+                                asyncio.wrap_future(future), 
+                                timeout=FILE_PROCESSING_TIMEOUT
+                            )
+                    else:  # .txt
+                        text = file_content.decode('utf-8', errors='ignore')
+                        if not text.strip() or len(text.strip()) < 20:
+                            raise Exception("Text content is too short or empty")
+                        return text
+                except asyncio.TimeoutError:
+                    raise Exception(f"File processing timed out after {FILE_PROCESSING_TIMEOUT}s. File may be too large or corrupted.")
+                except Exception as e:
+                    raise Exception(f"Failed to extract text from {file_ext} file: {str(e)}")
 
             text_content = await extract_text_with_timeout()
+            print(f"Text extracted successfully: {len(text_content)} characters")
+            
+            # Limit content size for processing
             if len(text_content) > 50000:
+                print(f"Text too long ({len(text_content)} chars), truncating to 50000 chars")
                 text_content = text_content[:50000]
 
+            # Step 2: Calculate summary length
+            print(f"Step 2: Calculating summary parameters...")
             base_length = max(150, min(500, len(text_content) // 10))
             max_length = int(base_length * (summary_length / 100.0) * 2)
             max_length = max(100, min(800, max_length))
+            print(f"Summary max_length calculated: {max_length} (from {summary_length}% setting)")
 
+            # Step 3: Generate summaries with AI
+            print(f"Step 3: Generating AI summaries...")
             async def generate_summaries_with_timeout():
-                summarizer = get_summarizer_service()
-                if not summarizer:
-                    raise Exception("Summarizer service not available")
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(summarizer.generate_summary, text_content, max_length)
-                    extractive_summary = await asyncio.wait_for(asyncio.wrap_future(future), timeout=AI_PROCESSING_TIMEOUT)
-                abstractive_summary = extractive_summary
                 try:
+                    summarizer = get_summarizer_service()
+                    if not summarizer:
+                        raise Exception("Summarizer service not initialized on server")
+                    
+                    # Generate extractive summary
+                    print(f"Generating extractive summary...")
                     with ThreadPoolExecutor(max_workers=1) as executor:
-                        future = executor.submit(
-                            summarizer.generate_multilingual_summary,
-                            text_content,
-                            target_language="en",
-                            max_length=max_length,
-                            summary_type="both"
+                        future = executor.submit(summarizer.generate_summary, text_content, max_length)
+                        extractive_summary = await asyncio.wait_for(
+                            asyncio.wrap_future(future), 
+                            timeout=AI_PROCESSING_TIMEOUT
                         )
-                        multilingual_result = await asyncio.wait_for(asyncio.wrap_future(future), timeout=AI_PROCESSING_TIMEOUT)
-                        abstractive_summary = multilingual_result.get('abstractive_summary', extractive_summary)
-                except Exception:
-                    pass
-                return extractive_summary, abstractive_summary
+                    print(f"Extractive summary generated: {len(extractive_summary)} characters")
+                    
+                    # Generate abstractive summary (with fallback)
+                    abstractive_summary = extractive_summary
+                    try:
+                        print(f"Generating multilingual/abstractive summary...")
+                        with ThreadPoolExecutor(max_workers=1) as executor:
+                            future = executor.submit(
+                                summarizer.generate_multilingual_summary,
+                                text_content,
+                                target_language="en",
+                                max_length=max_length,
+                                summary_type="both"
+                            )
+                            multilingual_result = await asyncio.wait_for(
+                                asyncio.wrap_future(future), 
+                                timeout=AI_PROCESSING_TIMEOUT
+                            )
+                            abstractive_summary = multilingual_result.get('abstractive_summary', extractive_summary)
+                            print(f"Abstractive summary generated: {len(abstractive_summary)} characters")
+                    except Exception as e:
+                        print(f"Multilingual summary generation failed (using extractive as fallback): {str(e)}")
+                    
+                    return extractive_summary, abstractive_summary
+                    
+                except asyncio.TimeoutError:
+                    raise Exception(f"AI summarization timed out after {AI_PROCESSING_TIMEOUT}s. Document may be too complex.")
+                except Exception as e:
+                    raise Exception(f"AI summarization failed: {str(e)}")
 
+            # Try AI summarization with fallback
             try:
                 extractive_summary, abstractive_summary = await generate_summaries_with_timeout()
-            except Exception:
+            except Exception as e:
+                print(f"AI summarization error: {str(e)}. Using fallback summarization...")
                 fallback_summary = generate_fallback_summary(text_content, max_length)
                 extractive_summary = abstractive_summary = fallback_summary
 
+            # Step 4: Extract keywords and tags
+            print(f"Step 4: Extracting keywords and tags...")
             try:
                 from app.services.keyword_extractor import KeywordExtractor
                 keyword_extractor = KeywordExtractor()
@@ -519,9 +636,13 @@ async def upload_document(
                 ai_tags = [kw['keyword'].title() for kw in keywords[:5]]
                 filename_tags = generate_tags(text_content, file.filename)
                 tags = list(set(ai_tags + filename_tags))[:8] or ['Document', 'Analysis']
-            except Exception:
+                print(f"Tags generated: {tags}")
+            except Exception as e:
+                print(f"Keyword extraction failed: {str(e)}. Using basic tags...")
                 tags = generate_tags(text_content, file.filename)
 
+            # Step 5: Save document
+            print(f"Step 5: Saving document to storage...")
             document_id = str(uuid.uuid4())
             document_data = {
                 "id": document_id,
@@ -536,12 +657,22 @@ async def upload_document(
                 "owner_id": "test_user",
                 "file_data": file_content
             }
+            
             try:
-                saved_id = await get_storage().save_document(document_data)
-            except Exception:
-                saved_id = document_data['id']
+                storage = get_storage()
+                if storage:
+                    saved_id = await storage.save_document(document_data)
+                    print(f"Document saved with ID: {saved_id}")
+                else:
+                    saved_id = document_id
+                    print(f"Storage not available, using generated ID: {saved_id}")
+            except Exception as e:
+                print(f"Storage save failed: {str(e)}. Using generated ID...")
+                saved_id = document_id
 
-            return {
+            # Step 6: Prepare response
+            print(f"Step 6: Preparing response...")
+            result = {
                 "id": saved_id,
                 "title": file.filename,
                 "original_filename": file.filename,
@@ -552,27 +683,113 @@ async def upload_document(
                 "file_size": len(file_content),
                 "file_type": file_ext
             }
+            
+            print(f"Processing completed successfully!")
+            return result
 
         async def sse_stream():
-            # Run the heavy work while sending keepalives every 2s
+            """
+            Server-Sent Events stream with proper Railway compatibility.
+            Sends progress updates and keepalives to prevent timeouts.
+            """
             try:
+                print(f"Starting SSE stream...")
+                
+                # Send initial progress update
+                progress_msg = {"status": "processing", "progress": 0, "message": "Starting document processing..."}
+                yield f"data: {json.dumps(progress_msg)}\n\n".encode('utf-8')
+                
+                # Create task for processing
                 task = asyncio.create_task(do_work())
+                keepalive_count = 0
+                elapsed_time = 0
+                
+                # Estimated phases with progress percentages
+                progress_phases = [
+                    (5, "Reading file..."),
+                    (15, "Extracting text from document..."),
+                    (30, "Analyzing content..."),
+                    (50, "Generating AI summary..."),
+                    (70, "Processing keywords and tags..."),
+                    (85, "Saving document..."),
+                    (95, "Finalizing..."),
+                ]
+                current_phase = 0
+                
+                # Send keepalives and progress updates while processing
                 while not task.done():
-                    yield b": keepalive\n\n"
-                    await asyncio.sleep(2)
+                    keepalive_count += 1
+                    elapsed_time += KEEPALIVE_INTERVAL
+                    
+                    # Send progress update every 5 keepalives (~5 seconds)
+                    if keepalive_count % 5 == 0 and current_phase < len(progress_phases):
+                        progress, message = progress_phases[current_phase]
+                        progress_msg = {
+                            "status": "processing",
+                            "progress": progress,
+                            "message": message,
+                            "elapsed_time": elapsed_time
+                        }
+                        yield f"data: {json.dumps(progress_msg)}\n\n".encode('utf-8')
+                        current_phase += 1
+                        print(f"Sent progress update: {progress}% - {message}")
+                    else:
+                        # Send keepalive comment (ignored by EventSource but keeps connection alive)
+                        yield f": keepalive {keepalive_count}\n\n".encode('utf-8')
+                        print(f"Sent keepalive #{keepalive_count} ({elapsed_time}s elapsed)")
+                    
+                    await asyncio.sleep(KEEPALIVE_INTERVAL)
+                
+                # Get the result
                 result = await task
-                yield ("data: " + json.dumps(result) + "\n\n").encode()
+                print(f"Processing complete, sending result...")
+                
+                # Add success status to result
+                result["status"] = "success"
+                result["progress"] = 100
+                result["message"] = "Document processed successfully!"
+                result["processing_time"] = elapsed_time
+                
+                # Send the final result as data event
+                data_line = f"data: {json.dumps(result)}\n\n"
+                yield data_line.encode('utf-8')
+                print(f"Result sent successfully (total time: {elapsed_time}s)")
+                
             except Exception as e:
-                print(f"ERROR in SSE stream: {str(e)}")
-                traceback.print_exc()
-                error_msg = {"error": str(e)}
-                yield ("data: " + json.dumps(error_msg) + "\n\n").encode()
+                error_trace = traceback.format_exc()
+                print(f"ERROR in SSE stream:\n{error_trace}")
+                
+                # Send error as data event
+                error_msg = {
+                    "status": "error",
+                    "error": str(e),
+                    "message": "An error occurred during document processing. Please try again or contact support if the issue persists.",
+                    "detail": str(e)
+                }
+                error_line = f"data: {json.dumps(error_msg)}\n\n"
+                yield error_line.encode('utf-8')
 
-        return StreamingResponse(sse_stream(), media_type="text/event-stream")
+        # Return streaming response with proper headers for Railway
+        return StreamingResponse(
+            sse_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",  # Disable nginx buffering on Railway
+                "Content-Type": "text/event-stream",
+            }
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"ERROR in upload endpoint: {str(e)}")
-        traceback.print_exc()
-        return {"error": str(e)}
+        error_trace = traceback.format_exc()
+        print(f"ERROR in upload endpoint:\n{error_trace}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Document upload failed: {str(e)}"
+        )
 
 @router.get("/{document_id}", response_model=DocumentResponse)
 async def get_document(document_id: str):

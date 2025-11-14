@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>InstaBrief SSE Upload Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            max-width: 1000px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #555;
+        }
+        input[type="file"],
+        input[type="number"],
+        select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .progress-container {
+            margin-top: 30px;
+            display: none;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background: #f0f0f0;
+            border-radius: 15px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #8BC34A);
+            width: 0%;
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 600;
+        }
+        .status-message {
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }
+        .status-processing {
+            background: #E3F2FD;
+            color: #1976D2;
+            border: 1px solid #1976D2;
+        }
+        .status-success {
+            background: #E8F5E9;
+            color: #2E7D32;
+            border: 1px solid #2E7D32;
+        }
+        .status-error {
+            background: #FFEBEE;
+            color: #C62828;
+            border: 1px solid #C62828;
+        }
+        .result-container {
+            margin-top: 20px;
+            display: none;
+        }
+        .result-section {
+            background: #f9f9f9;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }
+        .result-section h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        .summary-text {
+            white-space: pre-wrap;
+            line-height: 1.6;
+            color: #555;
+        }
+        .tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        .tag {
+            background: #4CAF50;
+            color: white;
+            padding: 5px 12px;
+            border-radius: 15px;
+            font-size: 12px;
+        }
+        .log-container {
+            margin-top: 30px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 5px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        .log-entry {
+            margin-bottom: 5px;
+        }
+        .test-stream-btn {
+            background: #2196F3;
+            margin-left: 10px;
+        }
+        .test-stream-btn:hover {
+            background: #1976D2;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📄 InstaBrief Document Upload Test (SSE)</h1>
+        
+        <form id="uploadForm">
+            <div class="form-group">
+                <label for="apiUrl">API URL:</label>
+                <input type="text" id="apiUrl" value="https://instabrief-production.up.railway.app/api/documents" placeholder="https://your-api.railway.app/api/documents">
+            </div>
+
+            <div class="form-group">
+                <label for="fileInput">Select Document (PDF, DOCX, TXT, PPTX):</label>
+                <input type="file" id="fileInput" accept=".pdf,.docx,.txt,.pptx" required>
+            </div>
+
+            <div class="form-group">
+                <label for="summaryLength">Summary Length (%):</label>
+                <input type="number" id="summaryLength" min="10" max="100" value="50" required>
+            </div>
+
+            <div class="form-group">
+                <label for="targetLanguage">Target Language:</label>
+                <select id="targetLanguage">
+                    <option value="en">English</option>
+                    <option value="es">Spanish</option>
+                    <option value="fr">French</option>
+                    <option value="de">German</option>
+                    <option value="hi">Hindi</option>
+                    <option value="zh">Chinese</option>
+                </select>
+            </div>
+
+            <button type="submit" id="uploadBtn">📤 Upload & Process</button>
+            <button type="button" id="testStreamBtn" class="test-stream-btn">🧪 Test Stream</button>
+        </form>
+
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill">0%</div>
+            </div>
+            <div class="status-message status-processing" id="statusMessage">
+                Initializing...
+            </div>
+        </div>
+
+        <div class="result-container" id="resultContainer">
+            <div class="result-section">
+                <h3>📋 Document Details</h3>
+                <p><strong>Title:</strong> <span id="docTitle"></span></p>
+                <p><strong>File Type:</strong> <span id="docType"></span></p>
+                <p><strong>File Size:</strong> <span id="docSize"></span></p>
+                <p><strong>Processing Time:</strong> <span id="processingTime"></span></p>
+            </div>
+
+            <div class="result-section">
+                <h3>📝 Summary</h3>
+                <h4>Extractive Summary:</h4>
+                <div class="summary-text" id="extractiveSummary"></div>
+                <h4>Abstractive Summary:</h4>
+                <div class="summary-text" id="abstractiveSummary"></div>
+            </div>
+
+            <div class="result-section">
+                <h3>🏷️ Tags</h3>
+                <div class="tags" id="tagsContainer"></div>
+            </div>
+        </div>
+
+        <div class="log-container" id="logContainer">
+            <strong>Event Log:</strong>
+            <div id="logEntries"></div>
+        </div>
+    </div>
+
+    <script>
+        const apiUrlInput = document.getElementById('apiUrl');
+        const uploadForm = document.getElementById('uploadForm');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const testStreamBtn = document.getElementById('testStreamBtn');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressFill = document.getElementById('progressFill');
+        const statusMessage = document.getElementById('statusMessage');
+        const resultContainer = document.getElementById('resultContainer');
+        const logContainer = document.getElementById('logContainer');
+        const logEntries = document.getElementById('logEntries');
+
+        let eventSource = null;
+
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.style.color = type === 'error' ? '#ff6b6b' : type === 'success' ? '#51cf66' : '#d4d4d4';
+            entry.textContent = `[${timestamp}] ${message}`;
+            logEntries.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        function updateProgress(progress, message) {
+            progressFill.style.width = progress + '%';
+            progressFill.textContent = progress + '%';
+            statusMessage.textContent = message;
+            log(`Progress: ${progress}% - ${message}`);
+        }
+
+        function showError(error) {
+            statusMessage.className = 'status-message status-error';
+            statusMessage.textContent = '❌ Error: ' + error;
+            log('ERROR: ' + error, 'error');
+            uploadBtn.disabled = false;
+        }
+
+        function showSuccess(data) {
+            statusMessage.className = 'status-message status-success';
+            statusMessage.textContent = '✅ Document processed successfully!';
+            resultContainer.style.display = 'block';
+
+            document.getElementById('docTitle').textContent = data.title;
+            document.getElementById('docType').textContent = data.file_type;
+            document.getElementById('docSize').textContent = (data.file_size / 1024).toFixed(2) + ' KB';
+            document.getElementById('processingTime').textContent = data.processing_time + 's';
+            document.getElementById('extractiveSummary').textContent = data.summary.extractive;
+            document.getElementById('abstractiveSummary').textContent = data.summary.abstractive;
+
+            const tagsContainer = document.getElementById('tagsContainer');
+            tagsContainer.innerHTML = '';
+            data.tags.forEach(tag => {
+                const tagEl = document.createElement('span');
+                tagEl.className = 'tag';
+                tagEl.textContent = tag;
+                tagsContainer.appendChild(tagEl);
+            });
+
+            log('SUCCESS: Document processed!', 'success');
+            uploadBtn.disabled = false;
+        }
+
+        // Test stream endpoint
+        testStreamBtn.addEventListener('click', async () => {
+            log('Testing SSE stream endpoint...');
+            progressContainer.style.display = 'block';
+            resultContainer.style.display = 'none';
+            testStreamBtn.disabled = true;
+
+            const apiUrl = apiUrlInput.value.trim();
+            const streamUrl = apiUrl + '/test-stream';
+
+            try {
+                const response = await fetch(streamUrl);
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data:')) {
+                            const data = JSON.parse(line.substring(5));
+                            if (data.status === 'testing') {
+                                updateProgress(data.count * 10, data.message);
+                            } else if (data.status === 'complete') {
+                                updateProgress(100, data.message);
+                                statusMessage.className = 'status-message status-success';
+                                log('Stream test completed successfully!', 'success');
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                showError('Stream test failed: ' + error.message);
+            } finally {
+                testStreamBtn.disabled = false;
+            }
+        });
+
+        // Handle form submission
+        uploadForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const fileInput = document.getElementById('fileInput');
+            const summaryLength = document.getElementById('summaryLength').value;
+            const targetLanguage = document.getElementById('targetLanguage').value;
+
+            if (!fileInput.files[0]) {
+                alert('Please select a file');
+                return;
+            }
+
+            log('Starting upload...');
+            progressContainer.style.display = 'block';
+            resultContainer.style.display = 'none';
+            uploadBtn.disabled = true;
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            formData.append('summary_length', summaryLength);
+            formData.append('target_language', targetLanguage);
+
+            const apiUrl = apiUrlInput.value.trim();
+            const uploadUrl = apiUrl + '/upload';
+
+            try {
+                const response = await fetch(uploadUrl, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data:')) {
+                            const data = JSON.parse(line.substring(5).trim());
+                            
+                            if (data.status === 'processing') {
+                                updateProgress(data.progress, data.message);
+                            } else if (data.status === 'success') {
+                                updateProgress(100, 'Complete!');
+                                showSuccess(data);
+                            } else if (data.status === 'error' || data.error) {
+                                showError(data.error || data.message);
+                            }
+                        } else if (line.startsWith(':')) {
+                            // Keepalive comment - log but don't show to user
+                            console.log('Keepalive received');
+                        }
+                    }
+                }
+            } catch (error) {
+                showError('Upload failed: ' + error.message);
+            }
+        });
+
+        log('Test page loaded. Ready to test SSE streaming.');
+    </script>
+</body>
+</html>
+
